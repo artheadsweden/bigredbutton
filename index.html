@@ -12,7 +12,7 @@
       <div class="w-full max-w-2xl">
         <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight">The Big Red Button</h1>
         <p class="mt-4 text-xl sm:text-2xl leading-snug">
-          Paste a Dropbox audio share link. Then tap “Create Link”.
+          Paste a Dropbox audio link. Tap Create Link.
         </p>
 
         <label for="sourceUrl" class="block mt-8 text-2xl font-bold">Audio link</label>
@@ -35,7 +35,7 @@
         </button>
 
         <div id="generatedActions" class="mt-6 hidden" aria-live="polite">
-          <label for="generatedLink" class="block text-2xl font-bold">Your button link</label>
+          <label for="generatedLink" class="block text-2xl font-bold">Your play link</label>
           <input
             id="generatedLink"
             type="text"
@@ -56,7 +56,7 @@
               type="button"
               class="w-full rounded-xl bg-black px-6 py-5 text-2xl sm:text-3xl font-extrabold text-white"
             >
-              Open Link
+              Test Link
             </button>
           </div>
 
@@ -69,17 +69,21 @@
 
     <!-- Player view (shown when #audio=... is present) -->
     <main id="playerView" class="min-h-screen hidden items-center justify-center p-6">
-      <button
-        id="bigButton"
-        type="button"
-        class="relative h-[70vmin] w-[70vmin] max-h-[520px] max-w-[520px] rounded-full text-white text-5xl sm:text-6xl font-extrabold tracking-wide border-8 border-black bg-gradient-to-b from-red-500 to-red-700 shadow-2xl ring-4 ring-white focus:outline-none focus:ring-0"
-        aria-label="Play audio"
-      >
-        <span aria-hidden="true" class="pointer-events-none absolute inset-6 rounded-full ring-4 ring-white/30"></span>
-        <span aria-hidden="true" class="pointer-events-none absolute inset-10 rounded-full bg-white/10"></span>
-        <span id="buttonIcon" aria-hidden="true" class="text-[18vmin] leading-none">▶</span>
-        <span id="buttonSrLabel" class="sr-only">Tap to play or pause</span>
-      </button>
+      <div class="flex flex-col items-center justify-center">
+        <button
+          id="bigButton"
+          type="button"
+          class="relative h-[70vmin] w-[70vmin] max-h-[520px] max-w-[520px] rounded-full text-white text-5xl sm:text-6xl font-extrabold tracking-wide border-8 border-black bg-gradient-to-b from-red-500 to-red-700 shadow-2xl ring-4 ring-white focus:outline-none focus:ring-0"
+          aria-label="Play audio"
+        >
+          <span aria-hidden="true" class="pointer-events-none absolute inset-6 rounded-full ring-4 ring-white/30"></span>
+          <span aria-hidden="true" class="pointer-events-none absolute inset-10 rounded-full bg-white/10"></span>
+          <span id="buttonIcon" aria-hidden="true" class="text-[18vmin] leading-none">▶</span>
+          <span id="buttonSrLabel" class="sr-only">Tap to play or pause</span>
+        </button>
+
+        <p id="playerError" class="mt-6 text-xl sm:text-2xl font-extrabold text-black hidden" role="alert"></p>
+      </div>
 
       <!-- Standard HTML5 audio element; kept out of sight to keep the UI to one button. -->
       <audio id="audio" preload="none"></audio>
@@ -148,6 +152,19 @@
         return input;
       }
 
+      function isDropboxUrl(urlString) {
+        try {
+          const u = new URL(urlString);
+          return (
+            u.hostname === "www.dropbox.com" ||
+            u.hostname === "dropbox.com" ||
+            u.hostname.endsWith("dropboxusercontent.com")
+          );
+        } catch {
+          return false;
+        }
+      }
+
       function setOnlyView(view) {
         const generatorView = document.getElementById("generatorView");
         const playerView = document.getElementById("playerView");
@@ -170,6 +187,8 @@
       function render() {
         const audioUrl = getAudioUrlFromHash();
         const audioEl = document.getElementById("audio");
+        const playerError = document.getElementById("playerError");
+        const button = document.getElementById("bigButton");
 
         if (!audioUrl) {
           setOnlyView("generator");
@@ -182,6 +201,28 @@
         }
 
         setOnlyView("player");
+
+        // If someone opens a link with a non-Dropbox #audio=..., fail clearly.
+        if (!isDropboxUrl(audioUrl)) {
+          if (playerError) {
+            playerError.textContent = "Only Dropbox audio links are supported in this version.";
+            playerError.classList.remove("hidden");
+          }
+          if (button) button.disabled = true;
+          if (audioEl) {
+            audioEl.pause();
+            audioEl.removeAttribute("src");
+            audioEl.load();
+          }
+          return;
+        }
+
+        if (playerError) {
+          playerError.textContent = "";
+          playerError.classList.add("hidden");
+        }
+        if (button) button.disabled = false;
+
         if (audioEl && audioEl.getAttribute("src") !== audioUrl) {
           audioEl.setAttribute("src", audioUrl);
           audioEl.load();
@@ -242,6 +283,11 @@
             return;
           }
 
+          if (!isDropboxUrl(raw)) {
+            showError("Only Dropbox audio links are supported in this version.");
+            return;
+          }
+
           const cleaned = cleanShareLink(raw);
           const encoded = encodeURIComponent(cleaned);
           const hash = `#audio=${encoded}`;
@@ -295,11 +341,19 @@
         const button = document.getElementById("bigButton");
         const icon = document.getElementById("buttonIcon");
         const audioEl = document.getElementById("audio");
+        const playerError = document.getElementById("playerError");
+
+        let isLoading = false;
 
         function syncButtonState() {
           const isPlaying = !audioEl.paused && !audioEl.ended;
-          icon.textContent = isPlaying ? "❚❚" : "▶";
-          button.setAttribute("aria-label", isPlaying ? "Pause audio" : "Play audio");
+          if (isLoading) {
+            icon.textContent = "…";
+            button.setAttribute("aria-label", "Loading audio");
+          } else {
+            icon.textContent = isPlaying ? "❚❚" : "▶";
+            button.setAttribute("aria-label", isPlaying ? "Pause audio" : "Play audio");
+          }
 
           // Darken button slightly while playing.
           button.classList.remove("from-red-500", "to-red-700", "from-red-600", "to-red-800");
@@ -319,16 +373,37 @@
             src: audioEl.getAttribute("src"),
           });
           setStatus("Audio failed to load");
+          if (playerError) {
+            playerError.textContent = "Could not load audio.";
+            playerError.classList.remove("hidden");
+          }
+          isLoading = false;
           syncButtonState();
         });
 
-        audioEl.addEventListener("play", syncButtonState);
-        audioEl.addEventListener("pause", syncButtonState);
-        audioEl.addEventListener("ended", syncButtonState);
+        audioEl.addEventListener("play", () => {
+          isLoading = false;
+          if (playerError) {
+            playerError.textContent = "";
+            playerError.classList.add("hidden");
+          }
+          syncButtonState();
+        });
+        audioEl.addEventListener("pause", () => {
+          isLoading = false;
+          syncButtonState();
+        });
+        audioEl.addEventListener("ended", () => {
+          isLoading = false;
+          syncButtonState();
+        });
 
         button.addEventListener("click", async () => {
           const audioUrl = getAudioUrlFromHash();
           if (!audioUrl) return;
+
+          // If the hash URL is unsupported, the renderer disables the button.
+          if (!isDropboxUrl(audioUrl)) return;
 
           if (audioEl.getAttribute("src") !== audioUrl) {
             audioEl.setAttribute("src", audioUrl);
@@ -337,6 +412,12 @@
 
           try {
             if (audioEl.paused) {
+              isLoading = true;
+              if (playerError) {
+                playerError.textContent = "";
+                playerError.classList.add("hidden");
+              }
+              syncButtonState();
               await audioEl.play();
               setStatus("Playing");
             } else {
@@ -345,6 +426,11 @@
             }
           } catch {
             setStatus("Unable to play audio");
+            if (playerError) {
+              playerError.textContent = "Could not play audio.";
+              playerError.classList.remove("hidden");
+            }
+            isLoading = false;
           }
 
           syncButtonState();
